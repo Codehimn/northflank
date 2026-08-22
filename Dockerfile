@@ -1,5 +1,18 @@
-FROM nginx:alpine
+FROM node:22-bookworm-slim
 
-COPY index.html /usr/share/nginx/html/index.html
+WORKDIR /app
 
-EXPOSE 80
+COPY package.json ./
+
+RUN npm install \
+    && npx playwright install --with-deps chromium \
+    && npm cache clean --force
+
+COPY app.js ./
+
+ENV PORT=3000
+ENV TARGET_URL=https://example.com
+
+EXPOSE 3000
+
+CMD ["node", "app.js"]
