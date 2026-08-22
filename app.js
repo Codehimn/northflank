@@ -3,27 +3,60 @@ import http from "http";
 import fs from "fs";
 
 const PORT = process.env.PORT || 3000;
-const URL = process.env.TARGET_URL || "https://rollercoin.com/sign-in";
+const URL = process.env.TARGET_URL || "https://rollercoin.com/game";
 
 const SCREENSHOT_PATH = "/tmp/screenshot.jpg";
+
+const STORAGE_STATE_PATH = "./storageState.json";
 const COOKIES_PATH = "./cookies.json";
+const LOCAL_STORAGE_PATH = "./localStorage.json";
 
 let browser;
 let context;
 let page;
 let takingScreenshot = false;
 
+
+// =====================================
+// LEER JSON DE FORMA SEGURA
+// =====================================
+
+function readJSON(path) {
+    try {
+        if (!fs.existsSync(path)) {
+            return null;
+        }
+
+        return JSON.parse(
+            fs.readFileSync(path, "utf8")
+        );
+
+    } catch (err) {
+        console.error(
+            `Error leyendo ${path}:`,
+            err.message
+        );
+
+        return null;
+    }
+}
+
+
+// =====================================
+// INICIAR BROWSER
+// =====================================
+
 async function startBrowser() {
+
     console.log("Iniciando Chromium...");
 
     browser = await chromium.launch({
         headless: true,
+
         args: [
             "--no-sandbox",
             "--disable-dev-shm-usage",
             "--disable-gpu",
-
-            // ahorrar algo de RAM
             "--disable-extensions",
             "--disable-background-networking",
             "--disable-default-apps",
@@ -36,60 +69,251 @@ async function startBrowser() {
         ]
     });
 
-    context = await browser.newContext({
-        viewport: {
-            width: 1280,
-            height: 720
-        }
-    });
 
-    // ==========================
-    // CARGAR COOKIES
-    // ==========================
+    // =====================================
+    // STORAGE STATE
+    // =====================================
 
-    if (fs.existsSync(COOKIES_PATH)) {
+    const storageStateExists =
+        fs.existsSync(STORAGE_STATE_PATH);
+
+    if (storageStateExists) {
+
+        console.log(
+            "Cargando storageState.json..."
+        );
+
+        context = await browser.newContext({
+            storageState: STORAGE_STATE_PATH,
+
+            viewport: {
+                width: 1280,
+                height: 720
+            }
+        });
+
+        console.log(
+            "storageState.json cargado"
+        );
+
+    } else {
+
+        console.log(
+            "No existe storageState.json"
+        );
+
+        context = await browser.newContext({
+            viewport: {
+                width: 1280,
+                height: 720
+            }
+        });
+
+    }
+
+
+    // =====================================
+    // COOKIES EXTRA
+    // =====================================
+
+    const cookieData = readJSON(
+        COOKIES_PATH
+    );
+
+    if (cookieData) {
+
         try {
-            const cookies = JSON.parse(
-                fs.readFileSync(COOKIES_PATH, "utf8")
-            );
 
-            await context.addCookies(cookies);
+            const cookies =
+                Array.isArray(cookieData)
+                    ? cookieData
+                    : cookieData.cookies;
 
-            console.log(
-                `Cookies cargadas: ${cookies.length}`
-            );
+            if (
+                Array.isArray(cookies) &&
+                cookies.length > 0
+            ) {
+
+                await context.addCookies(
+                    cookies
+                );
+
+                console.log(
+                    `Cookies añadidas: ${cookies.length}`
+                );
+
+            }
 
         } catch (err) {
+
             console.error(
                 "Error cargando cookies:",
                 err.message
             );
+
         }
+
     } else {
-        console.log("No existe cookies.json");
+
+        console.log(
+            "No existe cookies.json"
+        );
+
     }
+
+
+    // =====================================
+    // LOCAL STORAGE
+    // =====================================
+
+    const localStorageData =
+        readJSON(LOCAL_STORAGE_PATH);
+
+    if (localStorageData) {
+
+        console.log(
+            `localStorage encontrado: ${
+                Object.keys(localStorageData).length
+            } claves`
+        );
+
+        /*
+         * Este script se ejecuta ANTES
+         * del JavaScript de la página.
+         *
+         * Así RollerCoin ya ve token,
+         * refreshToken, fpdata, etc.
+         * cuando comienza a cargar.
+         */
+
+        await context.addInitScript(
+            (storage) => {
+
+                try {
+
+                    for (
+                        const [key, value]
+                        of Object.entries(storage)
+                    ) {
+
+                        window.localStorage.setItem(
+                            key,
+                            String(value)
+                        );
+
+                    }
+
+                } catch (err) {
+
+                    console.error(
+                        "Error inyectando localStorage",
+                        err
+                    );
+
+                }
+
+            },
+            localStorageData
+        );
+
+        console.log(
+            "localStorage preparado para inyección"
+        );
+
+    } else {
+
+        console.log(
+            "No existe localStorage.json"
+        );
+
+    }
+
+
+    // =====================================
+    // CREAR PÁGINA
+    // =====================================
 
     page = await context.newPage();
 
-    // 2 minutos para navegación
-    page.setDefaultNavigationTimeout(120000);
+    page.setDefaultNavigationTimeout(
+        120000
+    );
 
-    // 60 segundos para clicks/selectores/etc
-    page.setDefaultTimeout(60000);
+    page.setDefaultTimeout(
+        60000
+    );
 
-    console.log("Abriendo:", URL);
+
+    // =====================================
+    // DEBUG DE NAVEGACIÓN
+    // =====================================
+
+    page.on("console", msg => {
+        console.log(
+            `[BROWSER ${msg.type()}]`,
+            msg.text()
+        );
+    });
+
+    page.on("pageerror", err => {
+        console.error(
+            "[PAGE ERROR]",
+            err.message
+        );
+    });
+
+
+    // =====================================
+    // ABRIR WEB
+    // =====================================
+
+    console.log(
+        "Abriendo:",
+        URL
+    );
 
     try {
 
-        await page.goto(URL, {
-            waitUntil: "domcontentloaded",
-            timeout: 120000
-        });
+        await page.goto(
+            URL,
+            {
+                waitUntil: "domcontentloaded",
+                timeout: 120000
+            }
+        );
 
-        console.log("Página cargada:", page.url());
+        console.log(
+            "Página cargada:",
+            page.url()
+        );
 
-        // darle tiempo al JS de RollerCoin
-        await page.waitForTimeout(10000);
+        await page.waitForTimeout(
+            10000
+        );
+
+
+        // =====================================
+        // COMPROBAR LOCAL STORAGE
+        // =====================================
+
+        const localStorageKeys =
+            await page.evaluate(() => {
+
+                return Object.keys(
+                    window.localStorage
+                );
+
+            });
+
+        console.log(
+            `localStorage activo: ${localStorageKeys.length} claves`
+        );
+
+        console.log(
+            "Claves:",
+            localStorageKeys
+        );
+
 
     } catch (err) {
 
@@ -100,14 +324,24 @@ async function startBrowser() {
 
     }
 
+
     await takeScreenshot();
+
 }
 
 
+// =====================================
+// SCREENSHOT
+// =====================================
+
 async function takeScreenshot() {
 
-    if (!page || takingScreenshot)
+    if (
+        !page ||
+        takingScreenshot
+    ) {
         return;
+    }
 
     takingScreenshot = true;
 
@@ -124,7 +358,9 @@ async function takeScreenshot() {
             quality: 70
         });
 
-        console.log("Screenshot actualizado");
+        console.log(
+            "Screenshot actualizado"
+        );
 
     } catch (err) {
 
@@ -138,67 +374,160 @@ async function takeScreenshot() {
         takingScreenshot = false;
 
     }
+
 }
 
 
-// ==========================
-// SERVIDOR HTTP
-// ==========================
+// =====================================
+// SERVIDOR WEB
+// =====================================
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(
+    async (req, res) => {
 
-    if (
-        req.url === "/" ||
-        req.url === "/screenshot.jpg"
-    ) {
+        // =====================================
+        // SCREENSHOT
+        // =====================================
 
-        if (!fs.existsSync(SCREENSHOT_PATH)) {
+        if (
+            req.url === "/" ||
+            req.url === "/screenshot.jpg"
+        ) {
 
-            res.writeHead(200, {
-                "Content-Type": "text/plain"
-            });
+            if (
+                !fs.existsSync(
+                    SCREENSHOT_PATH
+                )
+            ) {
+
+                res.writeHead(
+                    200,
+                    {
+                        "Content-Type":
+                            "text/plain"
+                    }
+                );
+
+                res.end(
+                    "Esperando primer screenshot..."
+                );
+
+                return;
+            }
+
+            res.writeHead(
+                200,
+                {
+                    "Content-Type":
+                        "image/jpeg",
+
+                    "Cache-Control":
+                        "no-store, no-cache, must-revalidate"
+                }
+            );
+
+            fs.createReadStream(
+                SCREENSHOT_PATH
+            ).pipe(res);
+
+            return;
+        }
+
+
+        // =====================================
+        // STATUS
+        // =====================================
+
+        if (
+            req.url === "/status"
+        ) {
+
+            let browserData = null;
+
+            if (page) {
+
+                try {
+
+                    browserData =
+                        await page.evaluate(
+                            () => ({
+                                url:
+                                    location.href,
+
+                                title:
+                                    document.title,
+
+                                localStorageKeys:
+                                    Object.keys(
+                                        localStorage
+                                    )
+                            })
+                        );
+
+                } catch {
+                    browserData = null;
+                }
+
+            }
+
+            res.writeHead(
+                200,
+                {
+                    "Content-Type":
+                        "application/json"
+                }
+            );
 
             res.end(
-                "Esperando primer screenshot..."
+                JSON.stringify(
+                    {
+                        running:
+                            !!browser,
+
+                        page:
+                            browserData,
+
+                        files: {
+                            storageState:
+                                fs.existsSync(
+                                    STORAGE_STATE_PATH
+                                ),
+
+                            cookies:
+                                fs.existsSync(
+                                    COOKIES_PATH
+                                ),
+
+                            localStorage:
+                                fs.existsSync(
+                                    LOCAL_STORAGE_PATH
+                                )
+                        },
+
+                        screenshot:
+                            fs.existsSync(
+                                SCREENSHOT_PATH
+                            )
+                    },
+                    null,
+                    2
+                )
             );
 
             return;
         }
 
-        res.writeHead(200, {
-            "Content-Type": "image/jpeg",
-            "Cache-Control":
-                "no-store, no-cache, must-revalidate"
-        });
 
-        fs.createReadStream(
-            SCREENSHOT_PATH
-        ).pipe(res);
+        res.writeHead(404);
+        res.end("Not found");
 
-        return;
     }
+);
 
-    if (req.url === "/status") {
 
-        res.writeHead(200, {
-            "Content-Type": "application/json"
-        });
-
-        res.end(JSON.stringify({
-            url: page?.url(),
-            browser: !!browser,
-            screenshot:
-                fs.existsSync(SCREENSHOT_PATH)
-        }));
-
-        return;
-    }
-
-    res.writeHead(404);
-    res.end("Not found");
-
-});
-
+// =====================================
+// INICIAR SERVIDOR
+// =====================================
 
 server.listen(
     PORT,
@@ -215,8 +544,11 @@ server.listen(
 );
 
 
-// screenshot cada minuto
+// =====================================
+// SCREENSHOT CADA MINUTO
+// =====================================
+
 setInterval(
     takeScreenshot,
-    60000
+    60_000
 );
