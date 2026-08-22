@@ -11,7 +11,7 @@ RUN npm install \
 COPY app.js ./
 
 ENV PORT=3000
-ENV TARGET_URL=https://example.com
+ENV TARGET_URL=https://rollercoin.com/sign-in
 
 EXPOSE 3000
 
