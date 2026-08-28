@@ -3,7 +3,10 @@ import http from "http";
 import fs from "fs";
 
 const PORT = Number(process.env.PORT || 3000);
-const URL = process.env.TARGET_URL || "https://rollercoin.com/sign-in";
+
+const TARGET_URL =
+    process.env.TARGET_URL ||
+    "https://rollercoin.com/sign-in";
 
 const SCREENSHOT_PATH = "/tmp/screenshot.jpg";
 
@@ -115,7 +118,7 @@ async function startBrowser() {
         console.log("==================================");
         console.log("Iniciando Chromium visible");
         console.log("DISPLAY:", process.env.DISPLAY);
-        console.log("TARGET_URL:", URL);
+        console.log("TARGET_URL:", TARGET_URL);
         console.log("==================================");
 
         browser = await chromium.launch({
@@ -281,7 +284,6 @@ async function createMainPage() {
         }
     });
 
-    // Guarda automáticamente cuando cambia la URL.
     page.on("framenavigated", async frame => {
         if (!pageAlive()) return;
         if (frame !== page.mainFrame()) return;
@@ -290,8 +292,6 @@ async function createMainPage() {
 
         console.log("Navegación detectada:", currentUrl);
 
-        // Cuando sales del login y llegas a una zona de la cuenta,
-        // guarda inmediatamente la sesión.
         if (
             currentUrl.includes("/game") ||
             currentUrl.includes("/dashboard") ||
@@ -310,10 +310,10 @@ async function createMainPage() {
 async function navigateCurrentPage() {
     if (!pageAlive()) return;
 
-    console.log("Abriendo:", URL);
+    console.log("Abriendo:", TARGET_URL);
 
     try {
-        await page.goto(URL, {
+        await page.goto(TARGET_URL, {
             waitUntil: "domcontentloaded",
             timeout: 120000
         });
@@ -367,16 +367,18 @@ async function takeScreenshot() {
 }
 
 async function saveCurrentState() {
-    if (savingState || !contextAlive()) return false;
+    if (!contextAlive()) return false;
 
     try {
-        fs.mkdirSync(
-            PERSISTENT_STATE_PATH.substring(
-                0,
-                PERSISTENT_STATE_PATH.lastIndexOf("/")
-            ),
-            { recursive: true }
-        );
+        const slash = PERSISTENT_STATE_PATH.lastIndexOf("/");
+        const dir =
+            slash > 0
+                ? PERSISTENT_STATE_PATH.slice(0, slash)
+                : null;
+
+        if (dir) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
 
         await context.storageState({
             path: PERSISTENT_STATE_PATH
@@ -483,7 +485,7 @@ async function logMemory() {
 }
 
 const server = http.createServer(async (req, res) => {
-    const requestUrl = new URL(
+    const requestUrl = new globalThis.URL(
         req.url,
         `http://${req.headers.host || "localhost"}`
     );
@@ -597,13 +599,8 @@ server.listen(PORT, "0.0.0.0", () => {
     startBrowser();
 });
 
-// Screenshot cada minuto.
 setInterval(takeScreenshot, 60_000);
-
-// Guardado automático cada minuto.
-// Así una sesión iniciada manualmente por noVNC queda persistida rápido.
 setInterval(saveEverything, 60_000);
-
 setInterval(logMemory, 60_000);
 
 process.on("SIGTERM", async () => {
