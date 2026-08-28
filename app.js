@@ -2,21 +2,24 @@ import { chromium } from "playwright";
 import http from "http";
 import fs from "fs";
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT || 3000);
 const URL = process.env.TARGET_URL || "https://rollercoin.com/sign-in";
 
 const SCREENSHOT_PATH = "/tmp/screenshot.jpg";
-
 const STORAGE_STATE_PATH = "./storageState.json";
 const COOKIES_PATH = "./cookies.json";
 const LOCAL_STORAGE_PATH = "./localStorage.json";
+const PERSISTENT_STATE_PATH =
+    process.env.PERSISTENT_STATE_PATH || "/data/storageState.json";
 
-const PERSISTENT_STATE_PATH = process.env.PERSISTENT_STATE_PATH || "/data/storageState.json";
+let browser = null;
+let context = null;
+let page = null;
 
-let browser;
-let context;
-let page;
 let takingScreenshot = false;
+let savingState = false;
+let startingBrowser = false;
+let restartTimer = null;
 
 function readJSON(path) {
     try {
@@ -28,7 +31,19 @@ function readJSON(path) {
     }
 }
 
-function getStatePath() {
+function browserAlive() {
+    return !!browser && browser.isConnected();
+}
+
+function contextAlive() {
+    return browserAlive() && !!context;
+}
+
+function pageAlive() {
+    return contextAlive() && !!page && !page.isClosed();
+}
+
+function getInitialStatePath() {
     if (fs.existsSync(PERSISTENT_STATE_PATH)) {
         return PERSISTENT_STATE_PATH;
     }
@@ -40,95 +55,204 @@ function getStatePath() {
     return null;
 }
 
+function scheduleRestart(reason = "desconocido") {
+    if (restartTimer || startingBrowser) return;
+
+    console.error(`Chromium no está disponible. Reinicio programado. Motivo: ${reason}`);
+
+    restartTimer = setTimeout(async () => {
+        restartTimer = null;
+        await startBrowser();
+    }, 5000);
+}
+
+async function cleanupBrowserObjects() {
+    try {
+        if (page && !page.isClosed()) await page.close().catch(() => {});
+    } catch {}
+
+    try {
+        if (context) await context.close().catch(() => {});
+    } catch {}
+
+    try {
+        if (browser && browser.isConnected()) await browser.close().catch(() => {});
+    } catch {}
+
+    page = null;
+    context = null;
+    browser = null;
+}
+
 async function startBrowser() {
-    console.log("Iniciando Chromium visible...");
+    if (startingBrowser || browserAlive()) return;
 
-    browser = await chromium.launch({
-        headless: false,
-        args: [
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--disable-extensions",
-            "--disable-background-networking",
-            "--disable-default-apps",
-            "--disable-sync",
-            "--disable-translate",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-component-update",
-            "--disable-features=Translate,MediaRouter"
-        ]
-    });
+    startingBrowser = true;
 
-    const statePath = getStatePath();
+    try {
+        await cleanupBrowserObjects();
 
-    if (statePath) {
-        console.log("Cargando storage state:", statePath);
+        console.log("==================================");
+        console.log("Iniciando Chromium visible");
+        console.log("DISPLAY:", process.env.DISPLAY);
+        console.log("TARGET_URL:", URL);
+        console.log("==================================");
 
-        context = await browser.newContext({
-            storageState: statePath,
+        browser = await chromium.launch({
+            headless: false,
+            chromiumSandbox: false,
+            args: [
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+
+                // Evita /dev/shm pequeño en contenedores.
+                "--disable-dev-shm-usage",
+
+                // Reducir consumo gráfico.
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+
+                // Reducir procesos para un contenedor de RAM limitada.
+                "--renderer-process-limit=1",
+
+                "--disable-extensions",
+                "--disable-background-networking",
+                "--disable-background-timer-throttling",
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
+                "--disable-component-update",
+                "--disable-default-apps",
+                "--disable-sync",
+                "--disable-translate",
+                "--disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication",
+                "--metrics-recording-only",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--no-service-autorun",
+                "--password-store=basic",
+                "--use-mock-keychain",
+
+                "--window-position=0,0",
+                "--window-size=1280,720"
+            ]
+        });
+
+        browser.on("disconnected", () => {
+            console.error("Chromium se cerró o fue terminado por el sistema.");
+            browser = null;
+            context = null;
+            page = null;
+            scheduleRestart("browser disconnected");
+        });
+
+        const statePath = getInitialStatePath();
+
+        const contextOptions = {
             viewport: {
                 width: 1280,
                 height: 720
-            }
-        });
-    } else {
-        console.log("No existe storageState previo");
-
-        context = await browser.newContext({
-            viewport: {
+            },
+            screen: {
                 width: 1280,
                 height: 720
             }
-        });
-    }
+        };
 
-    const cookieData = readJSON(COOKIES_PATH);
+        if (statePath) {
+            console.log("Cargando storage state:", statePath);
+            contextOptions.storageState = statePath;
+        } else {
+            console.log("No se encontró storageState previo.");
+        }
 
-    if (cookieData) {
-        try {
+        context = await browser.newContext(contextOptions);
+
+        const cookieData = readJSON(COOKIES_PATH);
+
+        if (cookieData) {
             const cookies = Array.isArray(cookieData)
                 ? cookieData
                 : cookieData.cookies;
 
-            if (Array.isArray(cookies) && cookies.length > 0) {
-                await context.addCookies(cookies);
-                console.log(`Cookies añadidas: ${cookies.length}`);
-            }
-        } catch (err) {
-            console.error("Error cargando cookies:", err.message);
-        }
-    }
-
-    const localStorageData = readJSON(LOCAL_STORAGE_PATH);
-
-    if (localStorageData) {
-        console.log(
-            `localStorage encontrado: ${Object.keys(localStorageData).length} claves`
-        );
-
-        await context.addInitScript((storage) => {
-            for (const [key, value] of Object.entries(storage)) {
+            if (Array.isArray(cookies) && cookies.length) {
                 try {
-                    window.localStorage.setItem(key, String(value));
-                } catch {}
+                    await context.addCookies(cookies);
+                    console.log(`Cookies añadidas: ${cookies.length}`);
+                } catch (err) {
+                    console.error("Error cargando cookies.json:", err.message);
+                }
             }
-        }, localStorageData);
+        }
+
+        const localStorageData = readJSON(LOCAL_STORAGE_PATH);
+
+        if (localStorageData && typeof localStorageData === "object") {
+            console.log(
+                `Preparando localStorage: ${Object.keys(localStorageData).length} claves`
+            );
+
+            await context.addInitScript((storage) => {
+                try {
+                    for (const [key, value] of Object.entries(storage)) {
+                        window.localStorage.setItem(key, String(value));
+                    }
+                } catch {}
+            }, localStorageData);
+        }
+
+        page = await context.newPage();
+
+        page.setDefaultNavigationTimeout(120000);
+        page.setDefaultTimeout(60000);
+
+        page.on("pageerror", err => {
+            console.error("[PAGE ERROR]", err.message);
+        });
+
+        page.on("close", () => {
+            console.error("La pestaña principal fue cerrada.");
+            page = null;
+
+            if (browserAlive()) {
+                createReplacementPage().catch(err => {
+                    console.error("No se pudo recrear la pestaña:", err.message);
+                });
+            }
+        });
+
+        await navigateCurrentPage();
+
+        console.log("Chromium iniciado correctamente.");
+        await logMemory();
+        await takeScreenshot();
+
+    } catch (err) {
+        console.error("Fallo iniciando Chromium/Playwright:");
+        console.error(err?.stack || err?.message || String(err));
+
+        await cleanupBrowserObjects();
+        scheduleRestart("launch failure");
+    } finally {
+        startingBrowser = false;
     }
+}
+
+async function createReplacementPage() {
+    if (!contextAlive() || pageAlive()) return;
 
     page = await context.newPage();
-
     page.setDefaultNavigationTimeout(120000);
     page.setDefaultTimeout(60000);
 
-    page.on("console", msg => {
-        console.log(`[BROWSER ${msg.type()}]`, msg.text());
+    page.on("close", () => {
+        page = null;
     });
 
-    page.on("pageerror", err => {
-        console.error("[PAGE ERROR]", err.message);
-    });
+    await navigateCurrentPage();
+}
+
+async function navigateCurrentPage() {
+    if (!pageAlive()) return;
 
     console.log("Abriendo:", URL);
 
@@ -139,17 +263,25 @@ async function startBrowser() {
         });
 
         console.log("Página cargada:", page.url());
-
-        await page.waitForTimeout(5000);
     } catch (err) {
-        console.error("Error navegación:", err.message);
-    }
+        if (/Target page|context or browser has been closed/i.test(err.message)) {
+            console.error("Chromium se cerró durante la navegación.");
+            scheduleRestart("closed during navigation");
+            return;
+        }
 
-    await takeScreenshot();
+        // Un timeout no implica necesariamente que la página sea inutilizable.
+        console.error("Navegación incompleta:", err.message);
+    }
 }
 
 async function takeScreenshot() {
-    if (!page || takingScreenshot) return;
+    if (takingScreenshot) return;
+
+    if (!pageAlive()) {
+        if (!browserAlive()) scheduleRestart("screenshot without browser");
+        return;
+    }
 
     takingScreenshot = true;
 
@@ -157,29 +289,32 @@ async function takeScreenshot() {
         await page.screenshot({
             path: SCREENSHOT_PATH,
             type: "jpeg",
-            quality: 70
+            quality: 60,
+            timeout: 20000
         });
 
         console.log("Screenshot actualizado:", new Date().toISOString());
     } catch (err) {
-        console.error("Error screenshot:", err.message);
+        if (!pageAlive() || !browserAlive()) {
+            scheduleRestart("browser closed during screenshot");
+        } else {
+            console.error("Error screenshot:", err.message);
+        }
     } finally {
         takingScreenshot = false;
     }
 }
 
 async function saveCurrentState() {
-    if (!context) return;
+    if (savingState || !contextAlive()) return;
+
+    savingState = true;
 
     try {
-        const dir = PERSISTENT_STATE_PATH.substring(
-            0,
-            PERSISTENT_STATE_PATH.lastIndexOf("/")
-        );
+        const slash = PERSISTENT_STATE_PATH.lastIndexOf("/");
+        const dir = slash > 0 ? PERSISTENT_STATE_PATH.slice(0, slash) : null;
 
-        if (dir) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
+        if (dir) fs.mkdirSync(dir, { recursive: true });
 
         await context.storageState({
             path: PERSISTENT_STATE_PATH
@@ -187,17 +322,40 @@ async function saveCurrentState() {
 
         console.log("Storage state guardado:", PERSISTENT_STATE_PATH);
     } catch (err) {
-        console.error("Error guardando storage state:", err.message);
+        if (!contextAlive()) {
+            scheduleRestart("browser closed during storageState");
+        } else {
+            console.error("Error guardando storage state:", err.message);
+        }
+    } finally {
+        savingState = false;
     }
 }
 
-const server = http.createServer(async (req, res) => {
-    if (req.url === "/" || req.url === "/screenshot.jpg") {
-        if (!fs.existsSync(SCREENSHOT_PATH)) {
-            res.writeHead(200, {
-                "Content-Type": "text/plain"
-            });
+async function logMemory() {
+    try {
+        const status = fs.readFileSync("/proc/meminfo", "utf8");
+        const keep = status
+            .split("\n")
+            .filter(line =>
+                line.startsWith("MemTotal:") ||
+                line.startsWith("MemAvailable:")
+            )
+            .join(" | ");
 
+        console.log("Memoria:", keep);
+    } catch {}
+}
+
+const server = http.createServer(async (req, res) => {
+    const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+
+    if (
+        requestUrl.pathname === "/" ||
+        requestUrl.pathname === "/screenshot.jpg"
+    ) {
+        if (!fs.existsSync(SCREENSHOT_PATH)) {
+            res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
             res.end("Esperando primer screenshot...");
             return;
         }
@@ -211,12 +369,12 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
-    if (req.url === "/status") {
-        let browserData = null;
+    if (requestUrl.pathname === "/status") {
+        let pageInfo = null;
 
-        if (page) {
+        if (pageAlive()) {
             try {
-                browserData = await page.evaluate(() => ({
+                pageInfo = await page.evaluate(() => ({
                     url: location.href,
                     title: document.title,
                     localStorageKeys: Object.keys(localStorage)
@@ -225,12 +383,15 @@ const server = http.createServer(async (req, res) => {
         }
 
         res.writeHead(200, {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json; charset=utf-8"
         });
 
         res.end(JSON.stringify({
-            running: !!browser,
-            page: browserData,
+            browserConnected: browserAlive(),
+            contextAlive: contextAlive(),
+            pageAlive: pageAlive(),
+            startingBrowser,
+            page: pageInfo,
             files: {
                 storageState: fs.existsSync(STORAGE_STATE_PATH),
                 persistentStorageState: fs.existsSync(PERSISTENT_STATE_PATH),
@@ -243,40 +404,64 @@ const server = http.createServer(async (req, res) => {
         return;
     }
 
-    if (req.url === "/save-state") {
+    if (requestUrl.pathname === "/save-state") {
         await saveCurrentState();
 
         res.writeHead(200, {
-            "Content-Type": "application/json"
+            "Content-Type": "application/json; charset=utf-8"
         });
 
         res.end(JSON.stringify({
-            ok: true,
+            ok: contextAlive(),
             path: PERSISTENT_STATE_PATH
-        }));
+        }, null, 2));
 
         return;
     }
 
-    res.writeHead(404);
+    if (requestUrl.pathname === "/restart-browser") {
+        await cleanupBrowserObjects();
+        setTimeout(() => startBrowser(), 500);
+
+        res.writeHead(200, {
+            "Content-Type": "application/json; charset=utf-8"
+        });
+
+        res.end(JSON.stringify({
+            ok: true,
+            message: "Reinicio de Chromium solicitado"
+        }, null, 2));
+
+        return;
+    }
+
+    res.writeHead(404, {
+        "Content-Type": "text/plain; charset=utf-8"
+    });
+
     res.end("Not found");
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-    console.log(`Servidor escuchando en puerto ${PORT}`);
+    console.log(`Servidor HTTP escuchando en 0.0.0.0:${PORT}`);
     startBrowser();
 });
 
+// Menos trabajo periódico para un contenedor con poca RAM.
 setInterval(takeScreenshot, 60_000);
-setInterval(saveCurrentState, 60_000);
+setInterval(saveCurrentState, 5 * 60_000);
+setInterval(logMemory, 60_000);
 
 process.on("SIGTERM", async () => {
-    console.log("SIGTERM recibido, guardando estado...");
+    console.log("SIGTERM recibido.");
     await saveCurrentState();
+    await cleanupBrowserObjects();
+    process.exit(0);
+});
 
-    try {
-        await browser?.close();
-    } catch {}
-
+process.on("SIGINT", async () => {
+    console.log("SIGINT recibido.");
+    await saveCurrentState();
+    await cleanupBrowserObjects();
     process.exit(0);
 });

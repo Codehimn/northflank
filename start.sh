@@ -3,8 +3,7 @@ set -e
 
 export DISPLAY=:99
 
-echo "=== Iniciando escritorio virtual ==="
-
+echo "=== Iniciando Xvfb ==="
 Xvfb :99 \
   -screen 0 1280x720x24 \
   -ac \
@@ -12,19 +11,21 @@ Xvfb :99 \
 
 sleep 2
 
+echo "=== DISPLAY=$DISPLAY ==="
+
+# Evita mensajes de Fluxbox al intentar abrir un terminal inexistente.
+export TERMINAL=xterm
+
 echo "=== Iniciando Fluxbox ==="
-fluxbox &
+fluxbox >/tmp/fluxbox.log 2>&1 &
 
 sleep 1
 
 echo "=== Configurando VNC ==="
-
 VNC_PASSWORD="${VNC_PASSWORD:-cambiar123}"
+x11vnc -storepasswd "$VNC_PASSWORD" /tmp/vncpasswd >/dev/null
 
-x11vnc -storepasswd "$VNC_PASSWORD" /tmp/vncpasswd
-
-echo "=== Iniciando VNC ==="
-
+echo "=== Iniciando x11vnc ==="
 x11vnc \
   -display :99 \
   -rfbauth /tmp/vncpasswd \
@@ -33,12 +34,12 @@ x11vnc \
   -localhost \
   -rfbport 5900 \
   -noxdamage \
+  -repeat \
   -quiet &
 
-sleep 2
+sleep 1
 
 echo "=== Iniciando noVNC ==="
-
 websockify \
   --web=/usr/share/novnc/ \
   0.0.0.0:6080 \
@@ -46,5 +47,11 @@ websockify \
 
 sleep 2
 
+echo "=== Procesos gráficos ==="
+ps aux | grep -E "Xvfb|fluxbox|x11vnc|websockify" | grep -v grep || true
+
+echo "=== Memoria antes de Chromium ==="
+free -m || true
+
 echo "=== Iniciando Playwright ==="
-node /app/app.js
+exec node /app/app.js

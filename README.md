@@ -1,44 +1,53 @@
-# Playwright + noVNC para Northflank
+# Playwright + noVNC para Northflank, versión 2
 
-Contenedor con:
+Esta versión está ajustada para contenedores de RAM limitada.
+
+## Qué incluye
 
 - Chromium visible controlado por Playwright
 - Xvfb
 - Fluxbox
 - x11vnc
 - noVNC
-- screenshots cada minuto
-- carga opcional de cookies.json
-- carga opcional de localStorage.json
-- carga/guardado de storageState
+- Reinicio automático de Chromium si se cae
+- Screenshot cada minuto
+- `storageState` guardado cada 5 minutos
+- `cookies.json` opcional
+- `localStorage.json` opcional
+- `storageState.json` opcional
 
 ## Puertos
 
-- 3000: API/screenshot
-- 6080: noVNC
+### 3000
+HTTP auxiliar:
 
-## Variables recomendadas en Northflank
-
-- `TARGET_URL=https://rollercoin.com/sign-in`
-- `VNC_PASSWORD=pon-una-clave-fuerte`
-- `PORT=3000`
-- `PERSISTENT_STATE_PATH=/data/storageState.json`
-
-## Endpoints
-
-- `/` o `/screenshot.jpg`
+- `/`
+- `/screenshot.jpg`
 - `/status`
 - `/save-state`
+- `/restart-browser`
 
-## noVNC
+### 6080
+noVNC.
 
-Abre el puerto 6080 como HTTP público.
-
-Normalmente puedes entrar con:
+Ejemplo:
 
 `/vnc.html?autoconnect=true&resize=scale`
 
+## Variables Northflank
+
+- `TARGET_URL=https://rollercoin.com/sign-in`
+- `VNC_PASSWORD=UNA_CLAVE_FUERTE`
+- `PORT=3000`
+- `PERSISTENT_STATE_PATH=/data/storageState.json`
+
+## Importante con 400 MB RAM
+
+El escritorio noVNC puede funcionar mientras Chromium sea terminado por falta de RAM.
+Si en los logs aparece "Chromium se cerró o fue terminado por el sistema" de forma repetida,
+sube el servicio a 512 MB o más.
+
 ## Seguridad
 
-No subas cookies, tokens ni storageState a repositorios públicos.
-Los archivos reales están ignorados mediante `.gitignore`.
+No subas cookies, tokens, `localStorage.json` ni `storageState.json`
+a un repositorio público.
