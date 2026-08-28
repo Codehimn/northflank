@@ -1,0 +1,11 @@
+[
+  {
+    "name": "example",
+    "value": "value",
+    "domain": ".example.com",
+    "path": "/",
+    "secure": true,
+    "httpOnly": true,
+    "sameSite": "Lax"
+  }
+]
