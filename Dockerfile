@@ -2,7 +2,6 @@ FROM node:22-bookworm-slim
 
 WORKDIR /app
 
-# X11 + VNC + escritorio liviano + utilidades mínimas.
 RUN apt-get update && apt-get install -y \
     xvfb \
     x11vnc \
@@ -28,6 +27,8 @@ ENV PORT=3000
 ENV DISPLAY=:99
 ENV TARGET_URL=https://rollercoin.com/sign-in
 ENV NODE_OPTIONS=--max-old-space-size=96
+ENV PERSISTENT_STATE_PATH=/data/storageState.json
+ENV PERSISTENT_LOCAL_STORAGE_PATH=/data/localStorage.json
 
 EXPOSE 3000
 EXPOSE 6080

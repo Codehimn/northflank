@@ -1,26 +1,23 @@
-# Playwright + noVNC para Northflank, versión 2
+# Playwright + noVNC para Northflank v3
 
-Esta versión está ajustada para contenedores de RAM limitada.
-
-## Qué incluye
+Incluye:
 
 - Chromium visible controlado por Playwright
-- Xvfb
-- Fluxbox
-- x11vnc
-- noVNC
-- Reinicio automático de Chromium si se cae
-- Screenshot cada minuto
-- `storageState` guardado cada 5 minutos
-- `cookies.json` opcional
-- `localStorage.json` opcional
-- `storageState.json` opcional
+- noVNC para controlar el navegador remotamente
+- screenshots cada minuto
+- carga opcional de `cookies.json`
+- carga opcional de `localStorage.json`
+- carga opcional de `storageState.json`
+- normalización automática de `sameSite` en cookies
+- guardado automático de sesión
+- guardado automático de localStorage
+- restauración automática desde `/data`
+- detección de navegación a zonas autenticadas
+- reinicio automático de Chromium si se cae
 
 ## Puertos
 
 ### 3000
-HTTP auxiliar:
-
 - `/`
 - `/screenshot.jpg`
 - `/status`
@@ -34,20 +31,42 @@ Ejemplo:
 
 `/vnc.html?autoconnect=true&resize=scale`
 
-## Variables Northflank
+## Variables recomendadas en Northflank
 
 - `TARGET_URL=https://rollercoin.com/sign-in`
 - `VNC_PASSWORD=UNA_CLAVE_FUERTE`
 - `PORT=3000`
 - `PERSISTENT_STATE_PATH=/data/storageState.json`
+- `PERSISTENT_LOCAL_STORAGE_PATH=/data/localStorage.json`
 
-## Importante con 400 MB RAM
+## Volumen persistente
 
-El escritorio noVNC puede funcionar mientras Chromium sea terminado por falta de RAM.
-Si en los logs aparece "Chromium se cerró o fue terminado por el sistema" de forma repetida,
-sube el servicio a 512 MB o más.
+Para conservar la sesión entre redeploys/reinicios,
+monta un volumen persistente de Northflank en:
+
+`/data`
+
+Sin un volumen persistente, `/data` puede desaparecer cuando
+Northflank reemplace el contenedor.
+
+## Guardado automático
+
+Después del login manual mediante noVNC se guardan:
+
+- `/data/storageState.json`
+- `/data/localStorage.json`
+
+Se guardan cada minuto y también cuando se detecta navegación
+a rutas como `/game`, `/dashboard`, `/marketplace` o `/achievements`.
 
 ## Seguridad
 
-No subas cookies, tokens, `localStorage.json` ni `storageState.json`
-a un repositorio público.
+Los archivos de sesión pueden dar acceso a la cuenta.
+
+No subas al repositorio público:
+
+- `cookies.json`
+- `localStorage.json`
+- `storageState.json`
+
+Ya están incluidos en `.gitignore`.

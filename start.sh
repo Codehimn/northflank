@@ -13,7 +13,6 @@ sleep 2
 
 echo "=== DISPLAY=$DISPLAY ==="
 
-# Evita mensajes de Fluxbox al intentar abrir un terminal inexistente.
 export TERMINAL=xterm
 
 echo "=== Iniciando Fluxbox ==="
