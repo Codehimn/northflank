@@ -107,6 +107,48 @@ async function cleanupBrowserObjects() {
     browser = null;
 }
 
+async function installLightweightRouting() {
+    if (!context) return;
+
+    const blockedHosts = [
+        "googletagmanager.com",
+        "google-analytics.com",
+        "doubleclick.net",
+        "facebook.net",
+        "hotjar.com",
+        "posthog.com",
+        "intercom.io",
+        "intercomcdn.com",
+        "crisp.chat",
+        "static.crisp.chat",
+        "clarity.ms",
+        "segment.io",
+        "segment.com",
+        "amplitude.com",
+        "sentry.io"
+    ];
+
+    await context.route("**/*", async route => {
+        const request = route.request();
+        const type = request.resourceType();
+        const url = request.url().toLowerCase();
+
+        // Recursos pesados que no son necesarios para login/automatización.
+        if (type === "media" || type === "font") {
+            return route.abort();
+        }
+
+        // Analytics, tracking, chat y widgets secundarios.
+        if (blockedHosts.some(host => url.includes(host))) {
+            return route.abort();
+        }
+
+        return route.continue();
+    });
+
+    console.log("Modo ligero activo: media, fuentes y trackers bloqueados.");
+}
+
 async function startBrowser() {
     if (startingBrowser || browserAlive()) return;
 
@@ -128,25 +170,37 @@ async function startBrowser() {
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
+
                 "--disable-gpu",
                 "--disable-software-rasterizer",
+
                 "--renderer-process-limit=1",
+
                 "--disable-extensions",
+                "--disable-component-extensions-with-background-pages",
                 "--disable-background-networking",
                 "--disable-background-timer-throttling",
                 "--disable-backgrounding-occluded-windows",
                 "--disable-renderer-backgrounding",
+
                 "--disable-component-update",
                 "--disable-default-apps",
                 "--disable-sync",
                 "--disable-translate",
-                "--disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication",
+
+                "--disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication,InterestFeedContentSuggestions,NotificationTriggers,PaintHolding",
+
+                "--disable-notifications",
+                "--disable-popup-blocking",
+
                 "--metrics-recording-only",
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--no-service-autorun",
+
                 "--password-store=basic",
                 "--use-mock-keychain",
+
                 "--window-position=0,0",
                 "--window-size=1280,720"
             ]
@@ -181,6 +235,8 @@ async function startBrowser() {
         }
 
         context = await browser.newContext(contextOptions);
+
+        await installLightweightRouting();
 
         const cookieData = readJSON(COOKIES_PATH);
 
@@ -347,7 +403,7 @@ async function takeScreenshot() {
         await page.screenshot({
             path: SCREENSHOT_PATH,
             type: "jpeg",
-            quality: 60,
+            quality: 55,
             timeout: 20000
         });
 
@@ -535,6 +591,7 @@ const server = http.createServer(async (req, res) => {
             pageAlive: pageAlive(),
             startingBrowser,
             page: pageInfo,
+            lightweightMode: true,
             files: {
                 repoStorageState: fs.existsSync(STORAGE_STATE_PATH),
                 persistentStorageState: fs.existsSync(PERSISTENT_STATE_PATH),
