@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     procps \
     xterm \
     dbus-x11 \
+    util-linux \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package.json ./
@@ -27,8 +28,10 @@ ENV PORT=3000
 ENV DISPLAY=:99
 ENV TARGET_URL=https://rollercoin.com/sign-in
 ENV NODE_OPTIONS=--max-old-space-size=96
-ENV PERSISTENT_STATE_PATH=/data/storageState.json
-ENV PERSISTENT_LOCAL_STORAGE_PATH=/data/localStorage.json
+
+# Swap configurable
+ENV SWAP_SIZE=16G
+ENV SWAP_FILE=/swapfile
 
 EXPOSE 3000
 EXPOSE 6080
