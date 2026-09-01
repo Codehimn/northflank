@@ -11,7 +11,6 @@ RUN apt-get update && apt-get install -y \
     procps \
     xterm \
     dbus-x11 \
-    util-linux \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package.json ./
@@ -29,9 +28,14 @@ ENV DISPLAY=:99
 ENV TARGET_URL=https://rollercoin.com/sign-in
 ENV NODE_OPTIONS=--max-old-space-size=96
 
-# Swap configurable
-ENV SWAP_SIZE=16G
-ENV SWAP_FILE=/swapfile
+ENV VIEWPORT_WIDTH=1024
+ENV VIEWPORT_HEIGHT=576
+ENV SCREENSHOT_INTERVAL_MS=60000
+ENV SAVE_INTERVAL_MS=120000
+ENV BLOCK_IMAGES=true
+
+ENV PERSISTENT_STATE_PATH=/data/storageState.json
+ENV PERSISTENT_LOCAL_STORAGE_PATH=/data/localStorage.json
 
 EXPOSE 3000
 EXPOSE 6080
